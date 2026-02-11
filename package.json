@@ -1,7 +1,9 @@
 {
   "name": "react-native-countdown-component",
-  "version": "2.7.1",
+  "version": "3.0.0",
   "description": "React Native CountDown Component",
+  "main": "index.js",
+  "types": "index.d.ts",
   "repository": {
     "type": "git",
     "url": "https://github.com/talalmajali/react-native-countdown-component.git"
@@ -15,7 +17,8 @@
     "ios",
     "android",
     "counter",
-    "countdown"
+    "countdown",
+    "typescript"
   ],
   "author": {
     "name": "Talal Majali",
@@ -25,9 +28,9 @@
   "bugs": {
     "url": "https://github.com/talalmajali/react-native-countdown-component/issues"
   },
-  "dependencies": {
-    "lodash": "^4.17.13",
-    "sprintf-js": "^1.1.1",
-    "prop-types": "^15.5.8"
-  }
+  "peerDependencies": {
+    "react": ">=16.8.0",
+    "react-native": ">=0.59.0"
+  },
+  "license": "MIT"
 }

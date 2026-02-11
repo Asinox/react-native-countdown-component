@@ -1,15 +1,5 @@
-import React from 'react';
-import PropTypes from 'prop-types';
-
-import {
-  StyleSheet,
-  View,
-  Text,
-  TouchableOpacity,
-  AppState
-} from 'react-native';
-import _ from 'lodash';
-import {sprintf} from 'sprintf-js';
+import React, {useState, useEffect, useRef} from 'react';
+import {StyleSheet, View, Text, TouchableOpacity, AppState} from 'react-native';
 
 const DEFAULT_DIGIT_STYLE = {backgroundColor: '#FAB913'};
 const DEFAULT_DIGIT_TXT_STYLE = {color: '#000'};
@@ -23,216 +13,195 @@ const DEFAULT_TIME_LABELS = {
   s: 'Seconds',
 };
 
-class CountDown extends React.Component {
-  static propTypes = {
-    id: PropTypes.string,
-    digitStyle: PropTypes.object,
-    digitTxtStyle: PropTypes.object,
-    timeLabelStyle: PropTypes.object,
-    separatorStyle: PropTypes.object,
-    timeToShow: PropTypes.array,
-    showSeparator: PropTypes.bool,
-    size: PropTypes.number,
-    until: PropTypes.number,
-    onChange: PropTypes.func,
-    onPress: PropTypes.func,
-    onFinish: PropTypes.func,
+const formatNumber = (n) => String(Math.floor(n)).padStart(2, '0');
+
+const getTimeLeft = (until, timeToShow) => {
+  const s = Math.floor(until);
+  return {
+    days: Math.floor(s / 86400),
+    hours: timeToShow.includes('D')
+      ? Math.floor(s / 3600) % 24
+      : Math.floor(s / 3600),
+    minutes: timeToShow.includes('H')
+      ? Math.floor(s / 60) % 60
+      : Math.floor(s / 60),
+    seconds: timeToShow.includes('M') ? s % 60 : s,
   };
+};
 
-  state = {
-    until: Math.max(this.props.until, 0),
-    lastUntil: null,
-    wentBackgroundAt: null,
-  };
+const CountDown = ({
+  id,
+  digitStyle = DEFAULT_DIGIT_STYLE,
+  digitTxtStyle = DEFAULT_DIGIT_TXT_STYLE,
+  timeLabelStyle = DEFAULT_TIME_LABEL_STYLE,
+  separatorStyle = DEFAULT_SEPARATOR_STYLE,
+  timeToShow = DEFAULT_TIME_TO_SHOW,
+  timeLabels = DEFAULT_TIME_LABELS,
+  showSeparator = false,
+  size = 15,
+  until: untilProp = 0,
+  onChange,
+  onPress,
+  onFinish,
+  running = true,
+  style,
+}) => {
+  const [until, setUntil] = useState(() => Math.max(untilProp, 0));
+  const wentBackgroundAtRef = useRef(null);
+  const onFinishRef = useRef(onFinish);
+  const onChangeRef = useRef(onChange);
+  const runningRef = useRef(running);
 
-  constructor(props) {
-    super(props);
-    this.timer = setInterval(this.updateTimer, 1000);
-  }
+  // Keep callback refs in sync
+  useEffect(() => {
+    onFinishRef.current = onFinish;
+  }, [onFinish]);
 
-  componentDidMount() {
-    AppState.addEventListener('change', this._handleAppStateChange);
-  }
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
-  componentWillUnmount() {
-    clearInterval(this.timer);
-    AppState.removeEventListener('change', this._handleAppStateChange);
-  }
+  useEffect(() => {
+    runningRef.current = running;
+  }, [running]);
 
-  componentDidUpdate(prevProps, prevState) {
-    if (this.props.until !== prevProps.until || this.props.id !== prevProps.id) {
-      this.setState({
-        lastUntil: prevState.until,
-        until: Math.max(prevProps.until, 0)
-      });
-    }
-  }
-  // componentWillReceiveProps(nextProps) {
-  //   if (this.props.until !== nextProps.until || this.props.id !== nextProps.id) {
-  //     this.setState({
-  //       lastUntil: this.state.until,
-  //       until: Math.max(nextProps.until, 0)
-  //     });
-  //   }
-  // }
+  // Reset when `until` prop or `id` changes
+  useEffect(() => {
+    setUntil(Math.max(untilProp, 0));
+  }, [untilProp, id]);
 
-  _handleAppStateChange = currentAppState => {
-    const {until, wentBackgroundAt} = this.state;
-    if (currentAppState === 'active' && wentBackgroundAt && this.props.running) {
-      const diff = (Date.now() - wentBackgroundAt) / 1000.0;
-      this.setState({
-        lastUntil: until,
-        until: Math.max(0, until - diff)
-      });
-    }
-    if (currentAppState === 'background') {
-      this.setState({wentBackgroundAt: Date.now()});
-    }
-  }
+  // Handle AppState changes (background/foreground)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (
+        nextAppState === 'active' &&
+        wentBackgroundAtRef.current != null &&
+        runningRef.current
+      ) {
+        const diff = (Date.now() - wentBackgroundAtRef.current) / 1000.0;
+        wentBackgroundAtRef.current = null;
+        setUntil((prev) => {
+          const next = Math.max(0, prev - diff);
+          if (onChangeRef.current) {
+            onChangeRef.current(next);
+          }
+          if (next <= 0 && prev > 0 && onFinishRef.current) {
+            setTimeout(() => onFinishRef.current?.(), 0);
+          }
+          return next;
+        });
+      }
+      if (nextAppState === 'background') {
+        wentBackgroundAtRef.current = Date.now();
+      }
+    });
 
-  getTimeLeft = () => {
-    const {until} = this.state;
-    return {
-      seconds: until % 60,
-      minutes: parseInt(until / 60, 10) % 60,
-      hours: parseInt(until / (60 * 60), 10) % 24,
-      days: parseInt(until / (60 * 60 * 24), 10),
+    return () => {
+      subscription.remove();
     };
-  };
+  }, []);
 
-  updateTimer = () => {
-    // Don't fetch these values here, because their value might be changed
-    // in another thread
-    // const {lastUntil, until} = this.state;
+  // Timer interval
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!runningRef.current) return;
 
-    if (this.state.lastUntil === this.state.until || !this.props.running) {
-      return;
-    }
-    if (this.state.until === 1 || (this.state.until === 0 && this.state.lastUntil !== 1)) {
-      if (this.props.onFinish) {
-        this.props.onFinish();
-      }
-      if (this.props.onChange) {
-        this.props.onChange(this.state.until);
-      }
-    }
+      setUntil((prev) => {
+        if (prev <= 0) return 0;
+        const next = Math.max(0, prev - 1);
 
-    if (this.state.until === 0) {
-      this.setState({lastUntil: 0, until: 0});
-    } else {
-      if (this.props.onChange) {
-        this.props.onChange(this.state.until);
-      }
-      this.setState({
-        lastUntil: this.state.until,
-        until: Math.max(0, this.state.until - 1)
+        if (onChangeRef.current) {
+          onChangeRef.current(next);
+        }
+
+        if (next <= 0 && onFinishRef.current) {
+          setTimeout(() => onFinishRef.current?.(), 0);
+        }
+
+        return next;
       });
-    }
-  };
+    }, 1000);
 
-  renderDigit = (d) => {
-    const {digitStyle, digitTxtStyle, size} = this.props;
-    return (
-      <View style={[
-        styles.digitCont,        
+    return () => {
+      clearInterval(timer);
+    };
+  }, []);
+
+  const {days, hours, minutes, seconds} = getTimeLeft(until, timeToShow);
+  const formattedTime = [
+    formatNumber(days),
+    formatNumber(hours),
+    formatNumber(minutes),
+    formatNumber(seconds),
+  ];
+
+  const renderDigit = (d) => (
+    <View
+      style={[
+        styles.digitCont,
         {width: size * 2.3, height: size * 2.6},
         digitStyle,
       ]}>
-        <Text style={[
-          styles.digitTxt,
-          {fontSize: size},
-          digitTxtStyle,
-        ]}>
-          {d}
-        </Text>
-      </View>
+      <Text style={[styles.digitTxt, {fontSize: size}, digitTxtStyle]}>
+        {d}
+      </Text>
+    </View>
+  );
+
+  const renderLabel = (label) => {
+    if (!label) return null;
+    return (
+      <Text style={[styles.timeTxt, {fontSize: size / 1.8}, timeLabelStyle]}>
+        {label}
+      </Text>
     );
   };
 
-  renderLabel = label => {
-    const {timeLabelStyle, size} = this.props;
-    if (label) {
-      return (
-        <Text style={[
-          styles.timeTxt,
-          {fontSize: size / 1.8},
-          timeLabelStyle,
-        ]}>
-          {label}
-        </Text>
-      );
-    }
-  };
+  const renderDoubleDigits = (label, digits) => (
+    <View style={styles.doubleDigitCont}>
+      <View style={styles.timeInnerCont}>{renderDigit(digits)}</View>
+      {renderLabel(label)}
+    </View>
+  );
 
-  renderDoubleDigits = (label, digits) => {
-    return (
-      <View style={styles.doubleDigitCont}>
-        <View style={styles.timeInnerCont}>
-          {this.renderDigit(digits)}
-        </View>
-        {this.renderLabel(label)}
-      </View>
-    );
-  };
+  const renderSeparator = () => (
+    <View style={{justifyContent: 'center', alignItems: 'center'}}>
+      <Text
+        style={[styles.separatorTxt, {fontSize: size * 1.2}, separatorStyle]}>
+        {':'}
+      </Text>
+    </View>
+  );
 
-  renderSeparator = () => {
-    const {separatorStyle, size} = this.props;
-    return (
-      <View style={{justifyContent: 'center', alignItems: 'center'}}>
-        <Text style={[
-          styles.separatorTxt,
-          {fontSize: size * 1.2},
-          separatorStyle,
-        ]}>
-          {':'}
-        </Text>
-      </View>
-    );
-  };
+  const Component = onPress ? TouchableOpacity : View;
 
-  renderCountDown = () => {
-    const {timeToShow, timeLabels, showSeparator} = this.props;
-    const {until} = this.state;
-    const {days, hours, minutes, seconds} = this.getTimeLeft();
-    const newTime = sprintf('%02d:%02d:%02d:%02d', days, hours, minutes, seconds).split(':');
-    const Component = this.props.onPress ? TouchableOpacity : View;
-
-    return (
-      <Component
-        style={styles.timeCont}
-        onPress={this.props.onPress}
-      >
-        {timeToShow.includes('D') ? this.renderDoubleDigits(timeLabels.d, newTime[0]) : null}
-        {showSeparator && timeToShow.includes('D') && timeToShow.includes('H') ? this.renderSeparator() : null}
-        {timeToShow.includes('H') ? this.renderDoubleDigits(timeLabels.h, newTime[1]) : null}
-        {showSeparator && timeToShow.includes('H') && timeToShow.includes('M') ? this.renderSeparator() : null}
-        {timeToShow.includes('M') ? this.renderDoubleDigits(timeLabels.m, newTime[2]) : null}
-        {showSeparator && timeToShow.includes('M') && timeToShow.includes('S') ? this.renderSeparator() : null}
-        {timeToShow.includes('S') ? this.renderDoubleDigits(timeLabels.s, newTime[3]) : null}
+  return (
+    <View style={style}>
+      <Component style={styles.timeCont} onPress={onPress}>
+        {timeToShow.includes('D')
+          ? renderDoubleDigits(timeLabels.d, formattedTime[0])
+          : null}
+        {showSeparator && timeToShow.includes('D') && timeToShow.includes('H')
+          ? renderSeparator()
+          : null}
+        {timeToShow.includes('H')
+          ? renderDoubleDigits(timeLabels.h, formattedTime[1])
+          : null}
+        {showSeparator && timeToShow.includes('H') && timeToShow.includes('M')
+          ? renderSeparator()
+          : null}
+        {timeToShow.includes('M')
+          ? renderDoubleDigits(timeLabels.m, formattedTime[2])
+          : null}
+        {showSeparator && timeToShow.includes('M') && timeToShow.includes('S')
+          ? renderSeparator()
+          : null}
+        {timeToShow.includes('S')
+          ? renderDoubleDigits(timeLabels.s, formattedTime[3])
+          : null}
       </Component>
-    );
-  };
-
-  render() {
-    return (
-      <View style={this.props.style}>
-        {this.renderCountDown()}
-      </View>
-    );
-  }
-}
-
-CountDown.defaultProps = {
-  digitStyle: DEFAULT_DIGIT_STYLE,
-  digitTxtStyle: DEFAULT_DIGIT_TXT_STYLE,
-  timeLabelStyle: DEFAULT_TIME_LABEL_STYLE,
-  timeLabels: DEFAULT_TIME_LABELS,
-  separatorStyle: DEFAULT_SEPARATOR_STYLE,
-  timeToShow: DEFAULT_TIME_TO_SHOW,
-  showSeparator: false,
-  until: 0,
-  size: 15,
-  running: true,
+    </View>
+  );
 };
 
 const styles = StyleSheet.create({
@@ -263,7 +232,7 @@ const styles = StyleSheet.create({
   digitTxt: {
     color: 'white',
     fontWeight: 'bold',
-    fontVariant: ['tabular-nums']
+    fontVariant: ['tabular-nums'],
   },
   separatorTxt: {
     backgroundColor: 'transparent',
@@ -272,4 +241,4 @@ const styles = StyleSheet.create({
 });
 
 export default CountDown;
-export { CountDown };
+export {CountDown};
